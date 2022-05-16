@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
+import "./interfaces/VMTreeBeacon.sol";
 import "./verifiers/UpdateVerifier.sol";
 import "./verifiers/MassUpdateVerifier.sol";
 
-contract ChainlinkVMT is UpdateVerifier, MassUpdateVerifier {
+contract VMTree is UpdateVerifier, MassUpdateVerifier {
     uint public nextIndex;
     uint[20] public filledSubtrees;
     uint public constant TREE_CAPACITY = 2 ** 20;    
@@ -13,10 +14,12 @@ contract ChainlinkVMT is UpdateVerifier, MassUpdateVerifier {
 
     uint public latestIndex;
 
+    address public vmTreeBeacon;
     event LeafCommitted(uint leaf, uint index);
     event TreeUpdated(uint previousIndex, uint nextIndex);
 
-    constructor () {
+    constructor (address _vmTreeBeacon) {
+        vmTreeBeacon = _vmTreeBeacon;
         filledSubtrees = [
             0x2fe54c60d3acabf3343a35b6eba15db4821b340f76e741e2249685ed4899af6c,
             0x256a6135777eee2fd26f54b8b7037a25439d5235caee224154186d2b8a52e31d,
@@ -54,7 +57,14 @@ contract ChainlinkVMT is UpdateVerifier, MassUpdateVerifier {
         if (i == TREE_CAPACITY)
             revert TreeIsFull();
         commitments[i] = leaf;
-        unchecked { latestIndex = i + 1; }
+
+        unchecked {
+            uint n = i + 1;
+        }
+        latestIndex = n;
+        if ((n - nextIndex) >= 10) {
+            vmTreeBeacon.sprout();
+        }
         emit LeafCommitted(leaf, i);
         return i;
     }

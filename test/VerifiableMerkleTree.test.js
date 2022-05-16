@@ -1,5 +1,5 @@
 const { expect } = require('chai');
-const { deploy, deployBytes } = require('../scripts/hardhat.utils.js');
+const { deploy } = require('../scripts/hardhat.utils.js');
 const {
     calculateSubtrees,
     calculateUpdateProof,
@@ -21,15 +21,6 @@ const massUpdateVerifier = require('../circuits/out/mass_update_verifier.json');
 
 describe('[START] - VerifiableMerkleTree.test.js', function() {
     before(async () => {
-        this.merkleTreeWithHistory = await deployBytes(
-            'MerkleTreeWithHistory',
-            [],
-            MerkleTreeWithHistory.bytecode
-        );
-        this.incrementalTree = await deploy("MerkleTree", [], {
-            MerkleTreeLib: this.merkleTreeWithHistory.address
-        });
-
         this.verifiableTree = await deploy("VerifiableMerkleTree");
 
         this.getFilledSubtrees = async function(tree) {
@@ -48,19 +39,6 @@ describe('[START] - VerifiableMerkleTree.test.js', function() {
         this.endSubtrees = calculateSubtrees(mimcSponge, 20, this.leaves);
     });
 
-    it('should insert 1 leaf to the incremental merkle tree', async () => {
-        const incrementalStartSubtrees = await this.getFilledSubtrees(this.incrementalTree);
-        incrementalStartSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.startSubtrees[i]);
-        })
-
-        await this.incrementalTree.insert(this.leaves[0]);
-
-        incrementalEndSubtrees = await this.getFilledSubtrees(this.incrementalTree);
-        incrementalEndSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.singleEndSubtrees[i]);
-        });
-    });
 
     it('should generate a zero knowledge proof for a single deposit', async () => {
         console.time('update proof');
@@ -94,22 +72,6 @@ describe('[START] - VerifiableMerkleTree.test.js', function() {
         verifiableSingleEndSubtrees = await this.getFilledSubtrees(this.verifiableTree);
         verifiableSingleEndSubtrees.forEach((subtree, i) => {
             expect(subtree).to.be.equal(this.singleEndSubtrees[i]);
-        });
-    });
-
-    it('should insert 10 leaves to the incremental merkle tree', async () => {
-        const incrementalStartSubtrees = await this.getFilledSubtrees(this.incrementalTree);
-        incrementalStartSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.startSubtrees[i]);
-        })
-
-        this.leaves.slice(1).forEach(async leaf => {
-            await this.incrementalTree.insert(leaf);
-        });
-
-        incrementalEndSubtrees = await this.getFilledSubtrees(this.incrementalTree);
-        incrementalEndSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.endSubtrees[i]);
         });
     });
 
