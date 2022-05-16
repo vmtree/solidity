@@ -1,0 +1,10 @@
+# build stuff
+node_modules
+build
+dist
+
+# sensitive values
+**/*/.env
+
+# error logs
+*.log
