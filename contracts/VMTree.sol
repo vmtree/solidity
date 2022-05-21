@@ -1,25 +1,47 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-import "./interfaces/VMTreeBeacon.sol";
+import "./interfaces/Arborist.sol";
 import "./verifiers/UpdateVerifier.sol";
 import "./verifiers/MassUpdateVerifier.sol";
 
 contract VMTree is UpdateVerifier, MassUpdateVerifier {
-    uint public nextIndex;
-    uint[20] public filledSubtrees;
-    uint public constant TREE_CAPACITY = 2 ** 20;    
 
-    mapping(uint => uint) commitments;
-
-    uint public latestIndex;
-
-    address public vmTreeBeacon;
     event LeafCommitted(uint leaf, uint index);
     event TreeUpdated(uint previousIndex, uint nextIndex);
 
-    constructor (address _vmTreeBeacon) {
-        vmTreeBeacon = _vmTreeBeacon;
+    // max number of commitments that can fit in the tree
+    uint public constant TREE_CAPACITY = 2 ** 20;    
+
+    // the arborist signals to the chainlink don when updates are needed
+    address public arborist;
+
+    // the controller is the account/address that can submit commitments
+    address public controller;
+
+    // nextIndex is the actual index of the commitments that have been computed
+    // for inclusion in the tree
+    uint public nextIndex;
+
+    // latestIndex is the index of the most recent commitment in the queue
+    uint public latestIndex;
+
+    // filledSubtrees is an array of filled subnodes in the merkle tree
+    uint[20] public filledSubtrees;
+
+    // commitments is the queue of waiting leaves to insert in the merkle tree
+    mapping(uint => uint) commitments;
+
+    // this is the initialization function. can only be called once.
+    function plant(address _arborist, address _controller) external {
+        if (_arborist == address(0) || _controller == address(0)) {
+            revert ZeroAddress();
+        } else if (arborist != address(0) || controller != address(0)) {
+            revert TreeAlreadyPlanted();
+        }
+        arborist = _arborist;
+        controller = _controller;
+
         filledSubtrees = [
             0x2fe54c60d3acabf3343a35b6eba15db4821b340f76e741e2249685ed4899af6c,
             0x256a6135777eee2fd26f54b8b7037a25439d5235caee224154186d2b8a52e31d,
@@ -52,19 +74,26 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         return filledSubtrees;
     }
 
+    // add a leaf to the queue. if the queue is full or beyond full, then signal
+    // to the arborist that an update is needed
     function commit(uint leaf) public returns (uint) {
         uint i = latestIndex;
         if (i == TREE_CAPACITY)
             revert TreeIsFull();
+
         commitments[i] = leaf;
 
+        uint n;
         unchecked {
-            uint n = i + 1;
+            n = i + 1;
         }
+
         latestIndex = n;
+
         if ((n - nextIndex) >= 10) {
-            vmTreeBeacon.sprout();
+            IArborist(arborist).sprout();
         }
+
         emit LeafCommitted(leaf, i);
         return i;
     }
@@ -78,7 +107,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         uint latest = latestIndex;
         unchecked {
             if ((latest - next) < 10)
-                revert InsufficientInbox();
+                revert InsufficientSprouts();
         }
         uint[10] memory leaves;
         for (uint i; i < 10;) {
@@ -100,7 +129,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         uint next = nextIndex;
         unchecked {
             if ((latestIndex - next) < 10)
-                revert InsufficientInbox();
+                revert InsufficientSprouts();
             finalIndex = next + 10;
         }
 
@@ -148,7 +177,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     {
         uint next = nextIndex;
         if (next > latestIndex)
-            revert InsufficientInbox();
+            revert InsufficientSprouts();
         unchecked {
             finalIndex = next + 1;
         }
@@ -174,8 +203,12 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         }
         nextIndex = finalIndex;
     }
-    error InsufficientInbox();
+
+    error InsufficientSprouts();
     error InvalidUpdateProof();
     error InvalidMassUpdateProof();
+    error InvalidMsgSender();
+    error TreeAlreadyPlanted();
     error TreeIsFull();
+    error ZeroAddress();
 }
