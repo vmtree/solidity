@@ -3,7 +3,7 @@ pragma solidity ^0.8.10;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
-import "./interfaces/LinkTokenInterface.sol";
+import "./interfaces/ILinkToken.sol";
 import "./VMTree.sol";
 
 contract Arborist is Ownable {
@@ -14,6 +14,7 @@ contract Arborist is Ownable {
     using Clones for address;
 
     event LinkCollected(
+        address indexed source,
         address indexed collector,
         uint amount
     );
@@ -41,16 +42,17 @@ contract Arborist is Ownable {
 
     // the vmTreeTemplate is deployed in the constructor of this contract
     address public vmTreeTemplate;
-    // this is for rinkeby testnet only
-    address public constant linkToken = 0x01BE23585060835E02B77ef475b0Cc51aA1e0709;
+    // rinkeby testnet: 0x01BE23585060835E02B77ef475b0Cc51aA1e0709
+    address public immutable linkToken;
 
     uint public linkPayment;
     mapping (address => address) public linkPayers;
     mapping (address => uint) public linkPayerBalance;
     mapping (address => uint) public linkNodeBalance;
 
-    constructor(uint _linkPayment) {
+    constructor(uint _linkPayment, address _linkToken) {
         linkPayment = _linkPayment;
+        linkToken = _linkToken;
         vmTreeTemplate = address(new VMTree());
     }
 
@@ -137,6 +139,10 @@ contract Arborist is Ownable {
         emit VMTreeHarvested(msg.sender, linkNode, linkPayer, linkPayment);
     }
 
+    function checkTreeBalance() external view returns (uint) {
+        return linkPayerBalance[msg.sender];
+    }
+
     function collectLinkNodeLink(address to) external {
         uint collectionAmount = linkNodeBalance[msg.sender];
         if (collectionAmount == 0) {
@@ -144,13 +150,13 @@ contract Arborist is Ownable {
         }
         linkNodeBalance[msg.sender] = 0;
 
-        LinkTokenInterface(linkToken).transfer(to, collectionAmount);
-        emit LinkCollected(msg.sender, collectionAmount);
+        ILinkToken(linkToken).transfer(to, collectionAmount);
+        emit LinkCollected(address(this), msg.sender, collectionAmount);
     }
 
     // warning: this function can prevent a VMTree from functioning if the
     // balance gets too low
-    function collectLinkPayerLink(uint amount) external {
+    function collectLinkPayerLink(address to, uint amount) external {
         uint linkBalance = linkPayerBalance[msg.sender];
         if (linkBalance < amount) {
             revert InsufficientLinkBalance(msg.sender);
@@ -159,8 +165,8 @@ contract Arborist is Ownable {
             linkPayerBalance[msg.sender] = linkBalance - amount;
         }
 
-        LinkTokenInterface(linkToken).transfer(msg.sender, amount);
-        emit LinkCollected(msg.sender, amount);
+        ILinkToken(linkToken).transfer(to, amount);
+        emit LinkCollected(msg.sender, to, amount);
     }
 
     // warning: anyone can topup a linkPayer's balance, but the linkPayer can
@@ -171,11 +177,13 @@ contract Arborist is Ownable {
             linkPayerBalance[linkPayer] += amount;
         }
 
-        if (!LinkTokenInterface(linkToken).transferFrom(
+        if (!ILinkToken(linkToken).transferFrom(
             msg.sender,
             address(this),
             amount
         )) revert TopUpFailed();
+
+        emit LinkCollected(msg.sender, linkPayer, amount);
     }
 
     error InsufficientLinkBalance(address linkPayerOrCollector);

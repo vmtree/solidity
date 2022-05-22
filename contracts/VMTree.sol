@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-import "./interfaces/Arborist.sol";
+import "./interfaces/IArborist.sol";
 import "./verifiers/UpdateVerifier.sol";
 import "./verifiers/MassUpdateVerifier.sol";
 
@@ -119,6 +119,10 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
                 i++;
             }
         }
+        uint linkBalance = IArborist(arborist).checkTreeBalance();
+        if (linkBalance < IArborist(arborist).linkPayment()) {
+            revert InsufficientLinkBalance(address(this));
+        }
         return (leaves, filledSubtrees, next);
     }
 
@@ -210,6 +214,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     }
 
     error InsufficientLeaves();
+    error InsufficientLinkBalance(address linkPayerOrCollector);
     error InvalidUpdateProof();
     error InvalidMassUpdateProof();
     error InvalidMsgSender();

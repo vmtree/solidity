@@ -2,7 +2,7 @@
 // taken from: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.4/interfaces/LinkTokenInterface.sol
 pragma solidity ^0.8.10;
 
-interface LinkTokenInterface {
+interface ILinkToken {
   function allowance(address owner, address spender) external view returns (uint256 remaining);
   function approve(address spender, uint256 value) external returns (bool success);
   function balanceOf(address owner) external view returns (uint256 balance);

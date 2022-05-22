@@ -15,10 +15,6 @@ const {
     toVmtMassUpdateSolidityInput,
 } = utils;
 
-const MerkleTreeWithHistory = require('../build/MerkleTreeWithHistory.json');
-const updateVerifier = require('../circuits/out/update_verifier.json');
-const massUpdateVerifier = require('../circuits/out/mass_update_verifier.json');
-
 describe('[START] - VerifiableMerkleTree.test.js', function() {
     before(async () => {
         this.verifiableTree = await deploy("VerifiableMerkleTree");

@@ -31,6 +31,9 @@ module.exports = {
                     }
                 }
             },
+            {
+                version: "0.4.24",
+            }
         ],
         overrides: {
             "contracts/MerkleTreeWithHistory.yul": {
