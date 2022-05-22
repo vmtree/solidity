@@ -36,7 +36,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     function plant(address _arborist, address _controller) external {
         if (_arborist == address(0) || _controller == address(0)) {
             revert ZeroAddress();
-        } else if (arborist != address(0) || controller != address(0)) {
+        } else if (arborist != address(0)) {
             revert TreeAlreadyPlanted();
         }
         arborist = _arborist;
@@ -78,19 +78,22 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     // to the arborist that an update is needed
     function commit(uint leaf) public returns (uint) {
         uint i = latestIndex;
-        if (i == TREE_CAPACITY)
+        if (i == TREE_CAPACITY) {
             revert TreeIsFull();
+        } else if (msg.sender != controller) {
+            revert OnlyController();
+        }
 
         commitments[i] = leaf;
 
-        uint n;
+        uint newLatestIndex;
         unchecked {
-            n = i + 1;
+            newLatestIndex = i + 1;
         }
 
-        latestIndex = n;
+        latestIndex = newLatestIndex;
 
-        if ((n - nextIndex) >= 10) {
+        if ((newLatestIndex - nextIndex) >= 10) {
             IArborist(arborist).sprout();
         }
 
@@ -107,7 +110,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         uint latest = latestIndex;
         unchecked {
             if ((latest - next) < 10)
-                revert InsufficientSprouts();
+                revert InsufficientLeaves();
         }
         uint[10] memory leaves;
         for (uint i; i < 10;) {
@@ -129,7 +132,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         uint next = nextIndex;
         unchecked {
             if ((latestIndex - next) < 10)
-                revert InsufficientSprouts();
+                revert InsufficientLeaves();
             finalIndex = next + 10;
         }
 
@@ -159,13 +162,15 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
             revert InvalidMassUpdateProof();
 
         for (uint i; i < 20;) {
-            // if (publicSignals[i+11] != newSubtrees[i]) {
-            //     filledSubtrees[i] = newSubtrees[i];
-            // }
-            filledSubtrees[i] = newSubtrees[i];
-            unchecked { i++; }
+            unchecked { 
+                if (publicSignals[i+11] != newSubtrees[i]) {
+                    filledSubtrees[i] = newSubtrees[i];
+                }
+                i++; 
+            }
         }
         nextIndex = finalIndex;
+        IArborist(arborist).harvest(msg.sender);
     }
 
     function update(
@@ -177,7 +182,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     {
         uint next = nextIndex;
         if (next > latestIndex)
-            revert InsufficientSprouts();
+            revert InsufficientLeaves();
         unchecked {
             finalIndex = next + 1;
         }
@@ -204,10 +209,11 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         nextIndex = finalIndex;
     }
 
-    error InsufficientSprouts();
+    error InsufficientLeaves();
     error InvalidUpdateProof();
     error InvalidMassUpdateProof();
     error InvalidMsgSender();
+    error OnlyController();
     error TreeAlreadyPlanted();
     error TreeIsFull();
     error ZeroAddress();

@@ -3,14 +3,20 @@ pragma solidity ^0.8.10;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
+import "./interfaces/LinkTokenInterface.sol";
 import "./VMTree.sol";
 
 contract Arborist is Ownable {
-    using Clones for address;
     /**
-     * This contract is the factory and beacon that the Chainlink node
-     * listens to.
+     * This contract is the factory that deploys new VMTrees and the beacon that
+     * the Chainlink DON listens to for triggering updates.
      */
+    using Clones for address;
+
+    event LinkCollected(
+        address indexed collector,
+        uint amount
+    );
 
     // new tree deployed
     event VMTreeCloned(
@@ -21,10 +27,12 @@ contract Arborist is Ownable {
     );
 
     // tree ready for update
-    event VMTreeSprouted(address indexed tree, address linkPayer);
+    event VMTreeSprouted(
+        address tree
+    );
 
     // tree was updated
-    event VMTreePruned(
+    event VMTreeHarvested(
         address indexed tree,
         address indexed linkNode,
         address indexed linkPayer,
@@ -35,9 +43,8 @@ contract Arborist is Ownable {
     address public vmTreeTemplate;
     // this is for rinkeby testnet only
     address public constant linkToken = 0x01BE23585060835E02B77ef475b0Cc51aA1e0709;
-    // can be adjusted by owner
-    uint public linkPayment;
 
+    uint public linkPayment;
     mapping (address => address) public linkPayers;
     mapping (address => uint) public linkPayerBalance;
     mapping (address => uint) public linkNodeBalance;
@@ -55,9 +62,6 @@ contract Arborist is Ownable {
     )
         external
     {
-        if (msg.sender != linkToken) {
-            revert OnlyLink();
-        }
         uint expectedPayment;
         unchecked {
             expectedPayment = linkPayment * 10;
@@ -67,38 +71,29 @@ contract Arborist is Ownable {
             revert TokenNeeded(expectedPayment);
         } else if (data.length != 32) {
             revert InvalidDataLength();
+        } else if (msg.sender != linkToken) {
+            revert OnlyLink();
         }
 
         address controller = abi.decode(data, (address));
-        (bool success, bytes memory returnData) = address(this).delegatecall(
-            abi.encodeWithSelector(this.clone.selector, controller, sender)
-        );
+        address tree = cloneAndPlant(controller);
 
-        if (!success) {
-            revert CloneFailed();
-        } else {
-            address tree = abi.decode(returnData, (address));
-            linkPayers[tree] = sender;
+        linkPayers[tree] = sender;
+        uint linkBalance = linkPayerBalance[sender];
 
-            uint linkBalance = linkPayerBalance[sender];
-            unchecked {
-                linkPayerBalance[sender] = linkBalance + amount;
-            }
-
-            emit VMTreeCloned(tree, controller, amount, sender);
+        unchecked {
+            linkPayerBalance[sender] = linkBalance + amount;
         }
+
+        emit VMTreeCloned(tree, controller, amount, sender);
     }
 
     // this function is called within `onTokenTransfer`. to deploy, use
-    // `transferAndCall` on the LINK contract
-    function clone(address controller)
-        external
-        returns
-        (address)
+    // `transferAndCall` on the LINK contract with `controller` as the data
+    function cloneAndPlant(address controller)
+        internal
+        returns (address)
     {
-        if (msg.sender != linkToken) {
-            revert OnlyLink();
-        }
         address sapling = vmTreeTemplate.clone();
         VMTree(sapling).plant(address(this), controller);
         return sapling;
@@ -114,21 +109,23 @@ contract Arborist is Ownable {
             revert OnlyDescendants();
         }
 
-        emit VMTreeSprouted(msg.sender, linkPayer);
+        emit VMTreeSprouted(msg.sender);
     }
 
+    // this function is called after an update to increment the node's balance
+    // and to decrement the payer's balance
     function harvest(address linkNode)
         external
     {
-        // all descendents of vmTree will have nonzero linkPayer set
         address linkPayer = linkPayers[msg.sender];
-        if (linkPayer == address(0)) {
-            revert OnlyDescendants();
-        }
-
         uint payment = linkPayment;
         uint linkBalance = linkPayerBalance[linkPayer];
-        if (linkBalance < payment) {
+
+        // all descendents of vmTree will have nonzero linkPayer set
+        if (linkPayer == address(0)) {
+            revert OnlyDescendants();
+        } else if (linkBalance < payment) {
+            // chainlink node will avoid reverting tx
             revert InsufficientLinkBalance(linkPayer);
         }
 
@@ -137,13 +134,54 @@ contract Arborist is Ownable {
             linkNodeBalance[linkNode] += payment;
         }
 
-        emit VMTreePruned(msg.sender, linkNode, linkPayer, linkPayment);
+        emit VMTreeHarvested(msg.sender, linkNode, linkPayer, linkPayment);
     }
 
-    error CloneFailed();
-    error InsufficientLinkBalance(address linkPayer);
+    function collectLinkNodeLink(address to) external {
+        uint collectionAmount = linkNodeBalance[msg.sender];
+        if (collectionAmount == 0) {
+            revert InsufficientLinkBalance(msg.sender);
+        }
+        linkNodeBalance[msg.sender] = 0;
+
+        LinkTokenInterface(linkToken).transfer(to, collectionAmount);
+        emit LinkCollected(msg.sender, collectionAmount);
+    }
+
+    // warning: this function can prevent a VMTree from functioning if the
+    // balance gets too low
+    function collectLinkPayerLink(uint amount) external {
+        uint linkBalance = linkPayerBalance[msg.sender];
+        if (linkBalance < amount) {
+            revert InsufficientLinkBalance(msg.sender);
+        }
+        unchecked {
+            linkPayerBalance[msg.sender] = linkBalance - amount;
+        }
+
+        LinkTokenInterface(linkToken).transfer(msg.sender, amount);
+        emit LinkCollected(msg.sender, amount);
+    }
+
+    // warning: anyone can topup a linkPayer's balance, but the linkPayer can
+    // withdraw it (so they could potentially steal LINK tokens if someone else
+    // tops up their account)
+    function topUpLink(address linkPayer, uint amount) external {
+        unchecked {
+            linkPayerBalance[linkPayer] += amount;
+        }
+
+        if (!LinkTokenInterface(linkToken).transferFrom(
+            msg.sender,
+            address(this),
+            amount
+        )) revert TopUpFailed();
+    }
+
+    error InsufficientLinkBalance(address linkPayerOrCollector);
     error InvalidDataLength();
-    error OnlyLink();
     error OnlyDescendants();
+    error OnlyLink();
     error TokenNeeded(uint amount);
+    error TopUpFailed();
 }
