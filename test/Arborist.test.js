@@ -25,14 +25,34 @@ function hexPadLeft(h) {
 
 describe('[START] - Arborist.test.js', function() {
     before(async () => {
-        this.signer = await ethers.getSigner();
+        const signers = await ethers.getSigners();
+        this.sergey = signers[0];
+        this.linkPayer = signers[1];
+        this.linkNode = signers[2];
+        this.controller = signers[4];
         this.linkPayment = ethers.utils.parseUnits('0.1');
 
         this.leaves = unsafeRandomLeaves(11).map(bn => bn.toString());
-        this.startSubtrees = calculateSubtrees(mimcSponge, 20, 0, []);
-        this.singleEndSubtrees = calculateSubtrees(mimcSponge, 20, 0, [this.leaves[0]]);
-        this.endSubtrees = calculateSubtrees(mimcSponge, 20, 0, this.leaves);
-        
+
+        this.startSubtrees = calculateSubtrees(
+            mimcSponge,
+            20,
+            0,
+            []
+        );
+        this.singleEndSubtrees = calculateSubtrees(
+            mimcSponge,
+            20,
+            0,
+            [this.leaves[0]]
+        );
+        this.endSubtrees = calculateSubtrees(
+            mimcSponge,
+            20,
+            0,
+            this.leaves
+        );
+
         // deploy contracts
         this.linkToken = await deploy("LinkToken");
         this.arborist = await deploy(
@@ -41,22 +61,27 @@ describe('[START] - Arborist.test.js', function() {
         );
     });
 
-    it('signer balance should be total supply', async () => {
-        expect(await this.linkToken.balanceOf(this.signer.address))
-            .to.be.equal(await this.linkToken.totalSupply());       
+    it('linkPayer balance should be 10 * linkPayment', async () => {
+        await this.linkToken.transfer(
+            this.linkPayer.address, 
+            this.linkPayment.mul(10)
+        );
+
+        expect(await this.linkToken.balanceOf(this.linkPayer.address))
+            .to.be.equal(this.linkPayment.mul(10));       
     });
 
     it('should deploy a vmtree using LINKs transferAndCall', async () => {
-        await this.linkToken.transferAndCall(
+        await this.linkToken.connect(this.linkPayer).transferAndCall(
             this.arborist.address,
-            this.linkPayment.mul(100),
-            hexPadLeft(this.signer.address)
+            this.linkPayment.mul(10),
+            hexPadLeft(this.controller.address)
         );
         const [ log ] = await this.arborist.queryFilter('VMTreeCloned');
 
         const vmTreeFactory = await ethers.getContractFactory('VMTree');
         this.vmtree = new ethers.Contract(
-            log.args.tree, vmTreeFactory.interface, this.signer
+            log.args.tree, vmTreeFactory.interface, this.controller
         );
     });
 
@@ -102,7 +127,7 @@ describe('[START] - Arborist.test.js', function() {
         verifiableStartSubtrees.forEach((subtree, i) => {
             expect(subtree).to.be.equal(this.startSubtrees[i]);
         });
-        await this.vmtree.update(p, newSubtrees);
+        await this.vmtree.connect(this.linkNode).update(p, newSubtrees);
 
         verifiableSingleEndSubtrees = await this.vmtree.getFilledSubtrees();
         verifiableSingleEndSubtrees.forEach((subtree, i) => {
@@ -117,14 +142,28 @@ describe('[START] - Arborist.test.js', function() {
     });
 
     it('should generate a zero knowledge proof for 10 leaves', async() => {
+        const [
+            leaves,
+            filledSubtrees,
+            startIndex
+        ] = await this.vmtree.checkMassUpdate();
+
+        const endSubtrees = calculateSubtrees(
+            mimcSponge,
+            20,
+            Number(startIndex),
+            leaves,
+            filledSubtrees
+        );
+
         console.time('mass update proof');
         this.massUpdateProof = await calculateMassUpdateProof(
             "./circuits/massUpdate.wasm",
             "./circuits/massUpdate.zkey",
-            1,
-            this.leaves.slice(1),
-            this.singleEndSubtrees,
-            this.endSubtrees
+            startIndex,
+            leaves,
+            filledSubtrees,
+            endSubtrees
         );
         console.timeEnd('mass update proof');
         const result = await verifyProof(
@@ -135,6 +174,14 @@ describe('[START] - Arborist.test.js', function() {
         expect(result).to.be.true;
     });
 
+    it('should have correct link balances before performMassUpdate', async () => {
+        expect(await this.arborist.linkPayerBalance(this.linkPayer.address))
+            .to.be.equal(this.linkPayment.mul(10));
+
+        expect(await this.arborist.linkNodeBalance(this.linkNode.address))
+            .to.be.equal(0);
+    });
+
     it('should update the VMTree for 10 deposits', async () => {
         const { proof, publicSignals } = this.massUpdateProof;
         const { p, newSubtrees } = toVmtMassUpdateSolidityInput(
@@ -142,16 +189,44 @@ describe('[START] - Arborist.test.js', function() {
             publicSignals
         );
 
-        await this.vmtree.performMassUpdate(
+        await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
             p,
             newSubtrees
+        )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
+            this.vmtree.address,
+            this.linkNode.address,
+            this.linkPayer.address, 
+            this.linkPayment
         );
 
         verifiableEndSubtrees = await this.vmtree.getFilledSubtrees();
         verifiableEndSubtrees.forEach((subtree, i) => {
             expect(subtree).to.be.equal(this.endSubtrees[i]);
         })
-
     });
 
+    it('should have correct link balances after performMassUpdate', async () => {
+        expect(await this.arborist.linkPayerBalance(this.linkPayer.address))
+            .to.be.equal(this.linkPayment.mul(9));
+
+        expect(await this.arborist.linkNodeBalance(this.linkNode.address))
+            .to.be.equal(this.linkPayment);
+    });
+
+    it('should allow linkNode to withdraw payment', async () => {
+        await expect(this.arborist.connect(this.linkNode).collectLinkNodeLink(
+            this.linkNode.address
+        )).to.emit(this.arborist, 'LinkCollected').withArgs(
+            this.arborist.address,
+            this.linkNode.address,
+            this.linkPayment
+        );
+
+        expect(await this.linkToken.balanceOf(this.linkNode.address))
+            .to.be.equal(this.linkPayment);
+    });
+
+    it('should deposit more commitments', async () => {
+        
+    });
 });

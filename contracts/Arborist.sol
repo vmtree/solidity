@@ -13,6 +13,7 @@ contract Arborist is Ownable {
      */
     using Clones for address;
 
+    // link payments and such
     event LinkCollected(
         address indexed source,
         address indexed collector,
@@ -139,8 +140,10 @@ contract Arborist is Ownable {
         emit VMTreeHarvested(msg.sender, linkNode, linkPayer, linkPayment);
     }
 
-    function checkTreeBalance() external view returns (uint) {
-        return linkPayerBalance[msg.sender];
+    // this function is called by the tree to make sure the payment will succeed
+    function checkTreeBalance(address tree) external view returns (uint) {
+        address linkPayer = linkPayers[tree];
+        return linkPayerBalance[linkPayer];
     }
 
     function collectLinkNodeLink(address to) external {

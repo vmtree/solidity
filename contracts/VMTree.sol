@@ -116,10 +116,10 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         for (uint i; i < 10;) {
             unchecked {
                 leaves[i] = commitments[next + i];
-                i++;
+                ++i;
             }
         }
-        uint linkBalance = IArborist(arborist).checkTreeBalance();
+        uint linkBalance = IArborist(arborist).checkTreeBalance(address(this));
         if (linkBalance < IArborist(arborist).linkPayment()) {
             revert InsufficientLinkBalance(address(this));
         }
@@ -147,7 +147,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
             unchecked { 
                 publicSignals[i + 1] = commitments[i + next];
                 delete commitments[i + next];
-                i++;
+                ++i;
             }
         }
 
@@ -155,7 +155,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
             unchecked { 
                 publicSignals[i + 11] = filledSubtrees[i];
                 publicSignals[i + 31] = newSubtrees[i];
-                i++; 
+                ++i; 
             }
         }
 
@@ -170,7 +170,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
                 if (publicSignals[i+11] != newSubtrees[i]) {
                     filledSubtrees[i] = newSubtrees[i];
                 }
-                i++; 
+                ++i; 
             }
         }
         nextIndex = finalIndex;
@@ -197,7 +197,7 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
         for (uint i; i < 20;) {
             publicSignals[i + 2] = filledSubtrees[i];
             publicSignals[i + 22] = newSubtrees[i];
-            unchecked { i++; }
+            unchecked { ++i; }
         }
 
         if (!_verifyUpdateProof(
@@ -207,8 +207,12 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
             revert InvalidUpdateProof();
 
         for (uint i; i < 20;) {
-            filledSubtrees[i] = newSubtrees[i];
-            unchecked { i++; }
+            unchecked { 
+                if (publicSignals[i+11] != newSubtrees[i]) {
+                    filledSubtrees[i] = newSubtrees[i];
+                }
+                ++i;
+            }
         }
         nextIndex = finalIndex;
     }
