@@ -20,6 +20,6 @@
         "path": "^0.12.7",
         "solc": "0.8.9",
         "util": "^0.12.4",
-        "vmtjs": "https://github.com/Nobody-Labs/vmt-js"
+        "vmtjs": "https://github.com/nobody-labs/vmt-js.git"
     }
 }
