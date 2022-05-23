@@ -30,6 +30,7 @@ describe('[START] - Arborist.test.js', function() {
         this.linkPayer = signers[1];
         this.linkNode = signers[2];
         this.controller = signers[4];
+        this.externalAccount = signers[5];
         this.linkPayment = ethers.utils.parseUnits('0.1');
 
         this.leaves = unsafeRandomLeaves(11).map(bn => bn.toString());
@@ -214,6 +215,9 @@ describe('[START] - Arborist.test.js', function() {
     });
 
     it('should allow linkNode to withdraw payment', async () => {
+        expect(await this.linkToken.balanceOf(this.arborist.address))
+            .to.be.equal(this.linkPayment.mul(10));
+
         await expect(this.arborist.connect(this.linkNode).collectLinkNodeLink(
             this.linkNode.address
         )).to.emit(this.arborist, 'LinkCollected').withArgs(
@@ -224,9 +228,118 @@ describe('[START] - Arborist.test.js', function() {
 
         expect(await this.linkToken.balanceOf(this.linkNode.address))
             .to.be.equal(this.linkPayment);
+        expect(await this.linkToken.balanceOf(this.arborist.address))
+            .to.be.equal(this.linkPayment.mul(9));
     });
 
     it('should deposit more commitments', async () => {
-        
+        const leaves = unsafeRandomLeaves(10);
+        for (let i = 0; i < 10; i++) {
+            await this.vmtree.commit(leaves[i]);
+        }
+    });
+
+    it('should allow linkPayer to remove tokens', async() => {
+        await expect(this.arborist.connect(this.linkPayer).collectLinkPayerLink(
+            this.externalAccount.address, this.linkPayment.mul(9)
+        )).to.emit(this.arborist, 'LinkCollected').withArgs(
+            this.linkPayer.address,
+            this.externalAccount.address,
+            this.linkPayment.mul(9)
+        );
+    });
+
+    it('should revert on checkMassUpdate() due to low link balance', async () => {
+        await expect(this.vmtree.checkMassUpdate()).to.be.revertedWith(
+            'InsufficientLinkBalance'
+        );
+    });
+
+    it('should allow externalAccount to topUp tokens for linkPayer', async () => {
+        await this.linkToken.connect(this.externalAccount).approve(
+            this.arborist.address, this.linkPayment.mul(9)
+        );
+
+        await expect(this.arborist.connect(this.externalAccount).topUpLink(
+            this.linkPayer.address, this.linkPayment.mul(9)
+        )).to.emit(this.arborist, 'LinkCollected').withArgs(
+            this.externalAccount.address,
+            this.linkPayer.address,
+            this.linkPayment.mul(9)
+        );
+    });
+
+    it('should allow performMassUpdate to work again now that payment balance is available', async () => {
+        const [
+            leaves,
+            filledSubtrees,
+            startIndex
+        ] = await this.vmtree.checkMassUpdate();
+
+        const endSubtrees = calculateSubtrees(
+            mimcSponge,
+            20,
+            Number(startIndex),
+            leaves,
+            filledSubtrees
+        );
+
+        console.time('mass update proof');
+        const { proof, publicSignals } = await calculateMassUpdateProof(
+            "./circuits/massUpdate.wasm",
+            "./circuits/massUpdate.zkey",
+            startIndex,
+            leaves,
+            filledSubtrees,
+            endSubtrees
+        );
+        console.timeEnd('mass update proof');
+        const result = await verifyProof(
+            massUpdateVerifier,
+            publicSignals,
+            proof
+        );
+        expect(result).to.be.true;
+
+        const { p, newSubtrees } = toVmtMassUpdateSolidityInput(
+            proof,
+            publicSignals
+        );
+
+        await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
+            p,
+            newSubtrees
+        )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
+            this.vmtree.address,
+            this.linkNode.address,
+            this.linkPayer.address, 
+            this.linkPayment
+        );
+    });
+
+    it('should have correct link balances after performMassUpdate', async () => {
+        expect(await this.arborist.linkPayerBalance(this.linkPayer.address))
+            .to.be.equal(this.linkPayment.mul(8));
+
+        expect(await this.arborist.linkNodeBalance(this.linkNode.address))
+            .to.be.equal(this.linkPayment);
+    });
+
+    it('should allow linkNode to withdraw payment', async () => {
+        expect(await this.linkToken.balanceOf(this.arborist.address))
+            .to.be.equal(this.linkPayment.mul(9));
+
+        await expect(this.arborist.connect(this.linkNode).collectLinkNodeLink(
+            this.linkNode.address
+        )).to.emit(this.arborist, 'LinkCollected').withArgs(
+            this.arborist.address,
+            this.linkNode.address,
+            this.linkPayment
+        );
+
+        expect(await this.linkToken.balanceOf(this.linkNode.address))
+            .to.be.equal(this.linkPayment.mul(2));
+        expect(await this.linkToken.balanceOf(this.arborist.address))
+            .to.be.equal(this.linkPayment.mul(8));
     });
 });

@@ -11,7 +11,7 @@ interface IArborist {
     function linkPayers(address tree) external view returns (address);
     function linkPayerBalance(address linkPayer) external view returns (uint);
     function linkNodeBalance(address linkNode) external view returns (uint);
-    function checkTreeBalance() external view returns (uint);
+    function checkTreeBalance(address tree) external view returns (uint);
 
     /*
         Mutators
