@@ -13,6 +13,15 @@ contract Arborist is Ownable {
      */
     using Clones for address;
 
+    // for frontend
+    struct VMTreeData {
+        string name;
+        bool isActive;
+        address contractAddress;
+        address controller;
+        address linkPayer;
+    }
+
     // link payments and such
     event LinkCollected(
         address indexed source,
@@ -33,6 +42,19 @@ contract Arborist is Ownable {
         address tree
     );
 
+    // directrequest requires the OracleRequest event
+    event OracleRequest(
+        bytes32 indexed specId,
+        address requester,
+        bytes32 requestId,
+        uint256 payment,
+        address callbackAddr,
+        bytes4 callbackFunctionId,
+        uint256 cancelExpiration,
+        uint256 dataVersion,
+        bytes data
+    );
+
     // tree was updated
     event VMTreeHarvested(
         address indexed tree,
@@ -45,15 +67,24 @@ contract Arborist is Ownable {
     address public vmTreeTemplate;
     // rinkeby testnet: 0x01BE23585060835E02B77ef475b0Cc51aA1e0709
     address public immutable linkToken;
+    bytes32 public immutable specId;
 
     uint public linkPayment;
     mapping (address => address) public linkPayers;
     mapping (address => uint) public linkPayerBalance;
     mapping (address => uint) public linkNodeBalance;
 
-    constructor(uint _linkPayment, address _linkToken) {
+    mapping (address => uint) public linkNodeIndex;
+    address[] public linkNodes;
+    uint public linkNodeQueue;
+
+    mapping (address => uint) public vmtreeIndex;
+    VMTreeData[] public vmtrees;
+
+    constructor(uint _linkPayment, address _linkToken, bytes32 _specId) {
         linkPayment = _linkPayment;
         linkToken = _linkToken;
+        specId = _specId;
         vmTreeTemplate = address(new VMTree());
     }
 
@@ -72,21 +103,38 @@ contract Arborist is Ownable {
 
         if (amount < expectedPayment) {
             revert TokenNeeded(expectedPayment);
-        } else if (data.length != 32) {
+        } else if (data.length < 96) {
             revert InvalidDataLength();
         } else if (msg.sender != linkToken) {
             revert OnlyLink();
         }
 
-        address controller = abi.decode(data, (address));
+        // NOTE: hardhat failed to infer the reason for this reverting
+        (address controller, string memory name) = abi.decode(
+            data, 
+            (address, string)
+        );
         address tree = cloneAndPlant(controller);
 
         linkPayers[tree] = sender;
         uint linkBalance = linkPayerBalance[sender];
 
+        uint newLinkPayerBalance;
         unchecked {
-            linkPayerBalance[sender] = linkBalance + amount;
+            newLinkPayerBalance = linkBalance + amount;
+            linkPayerBalance[sender] = newLinkPayerBalance;
         }
+
+        // do this for the frontend. ideally v2 indexes from log events?
+        VMTreeData memory vmtree = VMTreeData({
+            name: name,
+            isActive: true,
+            contractAddress: tree,
+            controller: controller,
+            linkPayer: sender
+        });
+        vmtreeIndex[tree] = vmtrees.length;
+        vmtrees.push(vmtree);
 
         emit VMTreeCloned(tree, controller, amount, sender);
     }
@@ -103,7 +151,7 @@ contract Arborist is Ownable {
     }
 
     // this function alerts the chainlink don that a tree is ready to be updated
-    function sprout()
+    function sprout(uint nonce)
         external
     {
         // all descendents of vmTree will have nonzero linkPayer set
@@ -113,6 +161,17 @@ contract Arborist is Ownable {
         }
 
         emit VMTreeSprouted(msg.sender);
+        emit OracleRequest(
+            specId,
+            msg.sender,
+            keccak256(abi.encodePacked(msg.sender, nonce)),
+            linkPayment,
+            msg.sender,
+            bytes4(0),
+            nonce,
+            1,
+            ""
+        );
     }
 
     // this function is called after an update to increment the node's balance
@@ -187,6 +246,12 @@ contract Arborist is Ownable {
         )) revert TopUpFailed();
 
         emit LinkCollected(msg.sender, linkPayer, amount);
+    }
+
+    // solidity generates a public function, but it's an indexed array function.
+    // this returns all of the trees in the array in a single call
+    function getVMTrees() external view returns (uint, VMTreeData[] memory) {
+        return (vmtrees.length, vmtrees);
     }
 
     error InsufficientLinkBalance(address linkPayerOrCollector);

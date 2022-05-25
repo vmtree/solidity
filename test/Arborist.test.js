@@ -19,6 +19,12 @@ const {
     toVmtMassUpdateSolidityInput,
 } = utils;
 
+function encodeDeploy(controller, name) {
+    return ethers.utils.defaultAbiCoder.encode(
+        ["address", "string"], [controller, name]
+    );
+}
+
 function hexPadLeft(h) {
     return '0x' + h.slice(2).padStart(64, '0');
 }
@@ -56,10 +62,11 @@ describe('[START] - Arborist.test.js', function() {
 
         // deploy contracts
         this.linkToken = await deploy("LinkToken");
-        this.arborist = await deploy(
-            "Arborist",
-            [this.linkPayment, this.linkToken.address]
-        );
+        this.arborist = await deploy("Arborist", [
+            this.linkPayment,
+            this.linkToken.address,
+            "0x0badc0de0badc0de0badc0de0badc0de00000000000000000000000000000000"
+        ]);
     });
 
     it('linkPayer balance should be 10 * linkPayment', async () => {
@@ -73,10 +80,15 @@ describe('[START] - Arborist.test.js', function() {
     });
 
     it('should deploy a vmtree using LINKs transferAndCall', async () => {
+        // await this.linkToken.connect(this.linkPayer).transferAndCall(
+        //     this.arborist.address,
+        //     this.linkPayment.mul(10),
+        //     hexPadLeft(this.controller.address)
+        // );
         await this.linkToken.connect(this.linkPayer).transferAndCall(
             this.arborist.address,
             this.linkPayment.mul(10),
-            hexPadLeft(this.controller.address)
+            encodeDeploy(this.controller.address, "EOA VMTree")
         );
         const [ log ] = await this.arborist.queryFilter('VMTreeCloned');
 

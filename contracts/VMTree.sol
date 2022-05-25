@@ -93,8 +93,9 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
 
         latestIndex = newLatestIndex;
 
-        if ((newLatestIndex - nextIndex) >= 10) {
-            IArborist(arborist).sprout();
+        uint next = nextIndex;
+        if ((newLatestIndex - next) >= 10) {
+            IArborist(arborist).sprout(next);
         }
 
         emit LeafCommitted(leaf, i);

@@ -21,7 +21,7 @@ interface IArborist {
         uint amount,
         bytes calldata data
     ) external;
-    function sprout() external;
+    function sprout(uint nonce) external;
     function harvest(address linkNode) external;
     function collectLinkNodeLink(address to) external;
     function collectLinkPayerLink(address to, uint amount) external;
