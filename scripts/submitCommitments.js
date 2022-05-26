@@ -7,7 +7,7 @@ function hexPadLeft(h) {
 }
 
 async function main() {
-    const vmtreeAddress = "0x68FAb397179Ad560980995Ca45aE9Ea064501d10";
+    const vmtreeAddress = "0xdD732E916deF2744Eee604Ad067Ec8F1cCC06386";
     const treeFactory = await ethers.getContractFactory("VMTree");
     const signer = await ethers.getSigner();
     const vmtree = new ethers.Contract(
@@ -16,7 +16,9 @@ async function main() {
     const leaves = unsafeRandomLeaves(1);
 
     for (let i = 0; i < leaves.length; i++) {
-        await vmtree.commit(leaves[i]);    
+        console.log(i);
+        const tx = await vmtree.commit(leaves[i]);
+        console.log(tx.hash);
     }
 };
 

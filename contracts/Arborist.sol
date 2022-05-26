@@ -167,7 +167,7 @@ contract Arborist is Ownable {
             keccak256(abi.encodePacked(msg.sender, nonce)),
             linkPayment,
             msg.sender,
-            bytes4(0),
+            VMTree.checkMassUpdate.selector,
             nonce,
             1,
             ""

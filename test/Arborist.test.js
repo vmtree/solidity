@@ -85,16 +85,16 @@ describe('[START] - Arborist.test.js', function() {
         //     this.linkPayment.mul(10),
         //     hexPadLeft(this.controller.address)
         // );
-        await this.linkToken.connect(this.linkPayer).transferAndCall(
+        const tx = await this.linkToken.connect(this.linkPayer).transferAndCall(
             this.arborist.address,
             this.linkPayment.mul(10),
             encodeDeploy(this.controller.address, "EOA VMTree")
         );
-        const [ log ] = await this.arborist.queryFilter('VMTreeCloned');
-
+        const receipt = await tx.wait();
+        const parsedLog = this.arborist.interface.parseLog(receipt.logs[2])
         const vmTreeFactory = await ethers.getContractFactory('VMTree');
         this.vmtree = new ethers.Contract(
-            log.args.tree, vmTreeFactory.interface, this.controller
+            parsedLog.args.tree, vmTreeFactory.interface, this.controller
         );
     });
 
@@ -108,6 +108,9 @@ describe('[START] - Arborist.test.js', function() {
         await expect(this.vmtree.commit(this.leaves[9])).to.emit(
             this.arborist, 'VMTreeSprouted'
         ).withArgs(this.vmtree.address);
+        // const tx = await this.vmtree.commit(this.leaves[9]);
+        // const receipt = await tx.wait();
+        // console.log(this.arborist.interface.parseLog(receipt.logs[1]));
     });
 
     it('should generate a zero knowledge proof for a single deposit', async () => {

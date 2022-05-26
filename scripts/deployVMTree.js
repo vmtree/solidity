@@ -1,7 +1,9 @@
 const { ethers } = require('hardhat');
 
-function hexPadLeft(h) {
-    return '0x' + h.slice(2).padStart(64, '0');
+function encodeDeploy(controller, name) {
+    return ethers.utils.defaultAbiCoder.encode(
+        ["address", "string"], [controller, name]
+    );
 }
 
 async function main() {
@@ -12,14 +14,15 @@ async function main() {
         rinkebyLink, linkFactory.interface, signer
     );
 
-    const arborist = "0x0123FC63Aa73bD37739337973B5e13cdCf4FD8f8";
+    const arborist = "0xdd07fB4b59083d26F216f35CCDb18866E98e9762";
     const linkAmount = ethers.utils.parseUnits('1', 18);
 
     const tx = await linkToken.transferAndCall(
-        arborist, linkAmount, hexPadLeft(signer.address)
+        arborist, linkAmount, encodeDeploy(signer.address, "VMTree")
     );
     const receipt = await tx.wait();
-    console.log(receipt);
+    const arboristFactory = await ethers.getContractFactory('Arborist');
+    console.log(arboristFactory.interface.parseLog(receipt.logs[2]));
 };
 
 main().then(() => process.exit());
