@@ -37,12 +37,7 @@ contract Arborist is Ownable {
         address indexed linkPayer
     );
 
-    // tree ready for update
-    event VMTreeSprouted(
-        address tree
-    );
-
-    // directrequest requires the OracleRequest event
+    // chainlink!
     event OracleRequest(
         bytes32 indexed specId,
         address requester,
@@ -74,9 +69,15 @@ contract Arborist is Ownable {
     mapping (address => uint) public linkPayerBalance;
     mapping (address => uint) public linkNodeBalance;
 
+    // I want to add a rotating queue, when the request is made a timestamp
+    // will be stored, there will be a delay and a sliding window of redundancy
+    // first position node will always be able to answer but the second slot can
+    // answer after the first interval, then the third slot can answer after the
+    // second interval, etc
     mapping (address => uint) public linkNodeIndex;
     address[] public linkNodes;
-    uint public linkNodeQueue;
+    uint public delay;
+    uint public turn;
 
     mapping (address => uint) public vmtreeIndex;
     VMTreeData[] public vmtrees;
@@ -160,7 +161,7 @@ contract Arborist is Ownable {
             revert OnlyDescendants();
         }
 
-        emit VMTreeSprouted(msg.sender);
+        // chainlink!
         emit OracleRequest(
             specId,
             msg.sender,
@@ -168,7 +169,7 @@ contract Arborist is Ownable {
             linkPayment,
             msg.sender,
             VMTree.checkMassUpdate.selector,
-            nonce,
+            0,
             1,
             ""
         );

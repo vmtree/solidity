@@ -25,34 +25,38 @@ function encodeDeploy(controller, name) {
     );
 }
 
-function hexPadLeft(h) {
-    return '0x' + h.slice(2).padStart(64, '0');
-}
-
 describe('[START] - Arborist.test.js', function() {
     before(async () => {
+        // test accounts
         const signers = await ethers.getSigners();
         this.sergey = signers[0];
         this.linkPayer = signers[1];
         this.linkNode = signers[2];
         this.controller = signers[4];
         this.externalAccount = signers[5];
-        this.linkPayment = ethers.utils.parseUnits('0.1');
 
+        // contract params
+        this.linkPayment = ethers.utils.parseUnits('0.1');
+        this.specId = "0x" + "".padStart(32, '0').padStart(64, "0badc0de");
+
+        // commitments
         this.leaves = unsafeRandomLeaves(11).map(bn => bn.toString());
 
+        // before any commitments
         this.startSubtrees = calculateSubtrees(
             mimcSponge,
             20,
             0,
             []
         );
+        // after a single commitment
         this.singleEndSubtrees = calculateSubtrees(
             mimcSponge,
             20,
             0,
             [this.leaves[0]]
         );
+        // after 11 commitments
         this.endSubtrees = calculateSubtrees(
             mimcSponge,
             20,
@@ -65,12 +69,12 @@ describe('[START] - Arborist.test.js', function() {
         this.arborist = await deploy("Arborist", [
             this.linkPayment,
             this.linkToken.address,
-            "0x0badc0de0badc0de0badc0de0badc0de00000000000000000000000000000000"
+            this.specId
         ]);
     });
 
     it('linkPayer balance should be 10 * linkPayment', async () => {
-        await this.linkToken.transfer(
+        await this.linkToken.connect(this.sergey).transfer(
             this.linkPayer.address, 
             this.linkPayment.mul(10)
         );
@@ -80,11 +84,6 @@ describe('[START] - Arborist.test.js', function() {
     });
 
     it('should deploy a vmtree using LINKs transferAndCall', async () => {
-        // await this.linkToken.connect(this.linkPayer).transferAndCall(
-        //     this.arborist.address,
-        //     this.linkPayment.mul(10),
-        //     hexPadLeft(this.controller.address)
-        // );
         const tx = await this.linkToken.connect(this.linkPayer).transferAndCall(
             this.arborist.address,
             this.linkPayment.mul(10),
@@ -104,13 +103,22 @@ describe('[START] - Arborist.test.js', function() {
         }
     });
 
-    it('should emit `VMTSprouted` on 10th deposit', async () => {
-        await expect(this.vmtree.commit(this.leaves[9])).to.emit(
-            this.arborist, 'VMTreeSprouted'
-        ).withArgs(this.vmtree.address);
-        // const tx = await this.vmtree.commit(this.leaves[9]);
-        // const receipt = await tx.wait();
-        // console.log(this.arborist.interface.parseLog(receipt.logs[1]));
+    it('should emit `OracleRequest` on 10th deposit', async () => {
+        await expect(this.vmtree.commit(this.leaves[9]))
+            .to.emit(this.arborist, 'OracleRequest')
+            .withArgs(
+                this.specId,
+                this.vmtree.address,
+                ethers.utils.solidityKeccak256(
+                    ["address", "uint256"], [this.vmtree.address, "0"]
+                ),
+                this.linkPayment,
+                this.vmtree.address,
+                "0xeedd2da7", // checkMassUpdate()
+                0, // cancelExpiration is always zero
+                1, // dataVersion (I just saw this in the default contracts)
+                "0x"
+            );
     });
 
     it('should generate a zero knowledge proof for a single deposit', async () => {
@@ -151,10 +159,22 @@ describe('[START] - Arborist.test.js', function() {
         });
     });
 
-    it('should emit `VMTSprouted` again, on 11th deposit', async () => {
-        await expect(this.vmtree.commit(this.leaves[10])).to.emit(
-            this.arborist, 'VMTreeSprouted'
-        ).withArgs(this.vmtree.address);
+    it('should emit `OracleRequest` again, on 11th deposit', async () => {
+        await expect(this.vmtree.commit(this.leaves[10]))
+            .to.emit(this.arborist, 'OracleRequest')
+            .withArgs(
+                this.specId,
+                this.vmtree.address,
+                ethers.utils.solidityKeccak256(
+                    ["address", "uint256"], [this.vmtree.address, "1"]
+                ),
+                this.linkPayment,
+                this.vmtree.address,
+                "0xeedd2da7", // checkMassUpdate()
+                0, // cancelExpiration is always zero
+                1, // dataVersion (I just saw this in the default contracts)
+                "0x"
+            );
     });
 
     it('should generate a zero knowledge proof for 10 leaves', async() => {
