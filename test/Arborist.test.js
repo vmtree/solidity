@@ -1,23 +1,20 @@
 const { ethers } = require('hardhat');
 const { expect } = require('chai');
 const { deploy } = require('../scripts/hardhat.utils.js');
+const { stringifyBigInts } = require('ffjavascript').utils;
 const {
-    calculateSubtrees,
-    calculateUpdateProof,
-    calculateMassUpdateProof,
-    mimcSponge,
-    utils,
-    verifyProof
-} = require('vmtjs');
+    calculateNextRoot,
+    generateProof,
+    verifyProof,
+    poseidon: hasher,
+    utils
+} = require('vmtree-sdk');
 
-const updateVerifier = require('../circuits/updateVerifier.json');
-const massUpdateVerifier = require('../circuits/massUpdateVerifier.json');
+const { unsafeRandomLeaves, flattenProof } = utils;
 
-const {
-    unsafeRandomLeaves,
-    toVmtUpdateSolidityInput,
-    toVmtMassUpdateSolidityInput,
-} = utils;
+const wasmFileName = './circuits/mass_update.wasm';
+const zkeyFileName =  './circuits/mass_update.zkey';
+const verifierJson = require('../circuits/mass_update_verifier.json');
 
 function encodeDeploy(controller, name) {
     return ethers.utils.defaultAbiCoder.encode(
@@ -40,29 +37,19 @@ describe('[START] - Arborist.test.js', function() {
         this.specId = "0x" + "".padStart(32, '0').padStart(64, "0badc0de");
 
         // commitments
-        this.leaves = unsafeRandomLeaves(11).map(bn => bn.toString());
+        const leaves = unsafeRandomLeaves(16).map(bn => bn.toString());
+        this.leaves = leaves;
 
         // before any commitments
-        this.startSubtrees = calculateSubtrees(
-            mimcSponge,
-            20,
-            0,
-            []
-        );
-        // after a single commitment
-        this.singleEndSubtrees = calculateSubtrees(
-            mimcSponge,
-            20,
-            0,
-            [this.leaves[0]]
-        );
-        // after 11 commitments
-        this.endSubtrees = calculateSubtrees(
-            mimcSponge,
-            20,
-            0,
-            this.leaves
-        );
+        const {filledSubtrees: startSubtrees} = calculateNextRoot({hasher});
+        this.startSubtrees = startSubtrees;
+
+        // after 16 commitments
+        const {root: newRoot, filledSubtrees: endSubtrees} = calculateNextRoot({
+            hasher, leaves
+        });
+        this.newRoot = newRoot;
+        this.endSubtrees = endSubtrees;
 
         // deploy contracts
         this.linkToken = await deploy("LinkToken");
@@ -75,12 +62,12 @@ describe('[START] - Arborist.test.js', function() {
 
     it('linkPayer balance should be 10 * linkPayment', async () => {
         await this.linkToken.connect(this.sergey).transfer(
-            this.linkPayer.address, 
+            this.linkPayer.address,
             this.linkPayment.mul(10)
         );
 
         expect(await this.linkToken.balanceOf(this.linkPayer.address))
-            .to.be.equal(this.linkPayment.mul(10));       
+            .to.be.equal(this.linkPayment.mul(10));
     });
 
     it('should deploy a vmtree using LINKs transferAndCall', async () => {
@@ -97,14 +84,14 @@ describe('[START] - Arborist.test.js', function() {
         );
     });
 
-    it('should deposit 9 leaves into the tree', async () => {
-        for (let i = 0; i < 9; i++) {
+    it('should deposit 15 leaves into the tree', async () => {
+        for (let i = 0; i < 15; i++) {
             await this.vmtree.commit(this.leaves[i]);
         }
     });
 
-    it('should emit `OracleRequest` on 10th deposit', async () => {
-        await expect(this.vmtree.commit(this.leaves[9]))
+    it('should emit `OracleRequest` on 16th deposit', async () => {
+        await expect(this.vmtree.commit(this.leaves[15]))
             .to.emit(this.arborist, 'OracleRequest')
             .withArgs(
                 this.specId,
@@ -121,92 +108,23 @@ describe('[START] - Arborist.test.js', function() {
             );
     });
 
-    it('should generate a zero knowledge proof for a single deposit', async () => {
-        console.time('update proof');
-        this.updateProof = await calculateUpdateProof(
-            "./circuits/update.wasm",
-            "./circuits/update.zkey",
-            0,
-            this.leaves[0],
-            this.startSubtrees,
-            this.singleEndSubtrees
-        );
-        console.timeEnd('update proof');
-        const result = await verifyProof(
-            updateVerifier,
-            this.updateProof.publicSignals,
-            this.updateProof.proof
-        );
-        expect(result).to.be.true;
-    });
-
-    it('should update the VMTree for a single deposit', async () => {
-        const { proof, publicSignals } = this.updateProof;
-        const { p, newSubtrees } = toVmtUpdateSolidityInput(
-            proof,
-            publicSignals
-        );
-
-        const verifiableStartSubtrees = await this.vmtree.getFilledSubtrees();
-        verifiableStartSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.startSubtrees[i]);
+    it('should generate a zero knowledge proof for 16 leaves', async() => {
+        const input = stringifyBigInts({
+            newRoot: this.newRoot,
+            startIndex: 0,
+            startSubtrees: this.startSubtrees,
+            endSubtrees: this.endSubtrees,
+            leaves: this.leaves,
         });
-        await this.vmtree.connect(this.linkNode).update(p, newSubtrees);
-
-        verifiableSingleEndSubtrees = await this.vmtree.getFilledSubtrees();
-        verifiableSingleEndSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.singleEndSubtrees[i]);
-        });
-    });
-
-    it('should emit `OracleRequest` again, on 11th deposit', async () => {
-        await expect(this.vmtree.commit(this.leaves[10]))
-            .to.emit(this.arborist, 'OracleRequest')
-            .withArgs(
-                this.specId,
-                this.vmtree.address,
-                ethers.utils.solidityKeccak256(
-                    ["address", "uint256"], [this.vmtree.address, "1"]
-                ),
-                this.linkPayment,
-                this.vmtree.address,
-                "0xeedd2da7", // checkMassUpdate()
-                0, // cancelExpiration is always zero
-                1, // dataVersion (I just saw this in the default contracts)
-                "0x"
-            );
-    });
-
-    it('should generate a zero knowledge proof for 10 leaves', async() => {
-        const [
-            leaves,
-            filledSubtrees,
-            startIndex
-        ] = await this.vmtree.checkMassUpdate();
-
-        const endSubtrees = calculateSubtrees(
-            mimcSponge,
-            20,
-            Number(startIndex),
-            leaves,
-            filledSubtrees
-        );
 
         console.time('mass update proof');
-        this.massUpdateProof = await calculateMassUpdateProof(
-            "./circuits/massUpdate.wasm",
-            "./circuits/massUpdate.zkey",
-            startIndex,
-            leaves,
-            filledSubtrees,
-            endSubtrees
-        );
+        this.massUpdateProof = await generateProof({input, wasmFileName, zkeyFileName});
         console.timeEnd('mass update proof');
-        const result = await verifyProof(
-            massUpdateVerifier,
-            this.massUpdateProof.publicSignals,
-            this.massUpdateProof.proof
-        );
+        const result = await verifyProof({
+            proof: this.massUpdateProof.proof,
+            publicSignals: this.massUpdateProof.publicSignals,
+            verifierJson
+        });
         expect(result).to.be.true;
     });
 
@@ -218,27 +136,20 @@ describe('[START] - Arborist.test.js', function() {
             .to.be.equal(0);
     });
 
-    it('should update the VMTree for 10 deposits', async () => {
-        const { proof, publicSignals } = this.massUpdateProof;
-        const { p, newSubtrees } = toVmtMassUpdateSolidityInput(
-            proof,
-            publicSignals
-        );
+    it('should update the VMTree for 16 deposits', async () => {
+        const { proof } = this.massUpdateProof;
+        const p = flattenProof(proof);
 
         await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
-            p,
-            newSubtrees
+            this.newRoot,
+            this.endSubtrees,
+            p
         )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
             this.vmtree.address,
             this.linkNode.address,
-            this.linkPayer.address, 
+            this.linkPayer.address,
             this.linkPayment
         );
-
-        verifiableEndSubtrees = await this.vmtree.getFilledSubtrees();
-        verifiableEndSubtrees.forEach((subtree, i) => {
-            expect(subtree).to.be.equal(this.endSubtrees[i]);
-        })
     });
 
     it('should have correct link balances after performMassUpdate', async () => {
@@ -268,8 +179,8 @@ describe('[START] - Arborist.test.js', function() {
     });
 
     it('should deposit more commitments', async () => {
-        const leaves = unsafeRandomLeaves(10);
-        for (let i = 0; i < 10; i++) {
+        const leaves = unsafeRandomLeaves(16);
+        for (let i = 0; i < 16; i++) {
             await this.vmtree.commit(leaves[i]);
         }
     });
@@ -307,47 +218,45 @@ describe('[START] - Arborist.test.js', function() {
     it('should allow performMassUpdate to work again now that payment balance is available', async () => {
         const [
             leaves,
-            filledSubtrees,
+            startSubtrees,
             startIndex
         ] = await this.vmtree.checkMassUpdate();
 
-        const endSubtrees = calculateSubtrees(
-            mimcSponge,
-            20,
-            Number(startIndex),
-            leaves,
-            filledSubtrees
-        );
-
-        console.time('mass update proof');
-        const { proof, publicSignals } = await calculateMassUpdateProof(
-            "./circuits/massUpdate.wasm",
-            "./circuits/massUpdate.zkey",
+        const {root: newRoot, filledSubtrees: endSubtrees} = calculateNextRoot({
+            hasher,
             startIndex,
             leaves,
-            filledSubtrees,
-            endSubtrees
-        );
+            startSubtrees
+        });
+
+        const input = stringifyBigInts({
+            newRoot,
+            startIndex,
+            startSubtrees,
+            endSubtrees,
+            leaves,
+        });
+
+        console.time('mass update proof');
+        const { proof, publicSignals } = await generateProof({input, wasmFileName, zkeyFileName});
         console.timeEnd('mass update proof');
-        const result = await verifyProof(
-            massUpdateVerifier,
+        const result = await verifyProof({
+            proof,
             publicSignals,
-            proof
-        );
+            verifierJson
+        });
         expect(result).to.be.true;
 
-        const { p, newSubtrees } = toVmtMassUpdateSolidityInput(
-            proof,
-            publicSignals
-        );
+        const p = flattenProof(proof);
 
         await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
-            p,
-            newSubtrees
+            newRoot,
+            endSubtrees,
+            p
         )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
             this.vmtree.address,
             this.linkNode.address,
-            this.linkPayer.address, 
+            this.linkPayer.address,
             this.linkPayment
         );
     });

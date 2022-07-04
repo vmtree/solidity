@@ -2,221 +2,9 @@
 pragma solidity ^0.8.10;
 
 import "./interfaces/IArborist.sol";
-import "./verifiers/UpdateVerifier.sol";
 import "./verifiers/MassUpdateVerifier.sol";
 
-contract VMTree is UpdateVerifier, MassUpdateVerifier {
-
-    event LeafCommitted(uint leaf, uint index);
-    event TreeUpdated(uint previousIndex, uint nextIndex);
-
-    // max number of commitments that can fit in the tree
-    uint public constant TREE_CAPACITY = 2 ** 20;    
-
-    // the arborist signals to the chainlink don when updates are needed
-    address public arborist;
-
-    // the controller is the account/address that can submit commitments
-    address public controller;
-
-    // nextIndex is the actual index of the commitments that have been computed
-    // for inclusion in the tree
-    uint public nextIndex;
-
-    // latestIndex is the index of the most recent commitment in the queue
-    uint public latestIndex;
-
-    // filledSubtrees is an array of filled subnodes in the merkle tree
-    uint[20] public filledSubtrees;
-
-    // commitments is the queue of waiting leaves to insert in the merkle tree
-    mapping(uint => uint) commitments;
-
-    // this is the initialization function. can only be called once.
-    function plant(address _arborist, address _controller) external {
-        if (_arborist == address(0) || _controller == address(0)) {
-            revert ZeroAddress();
-        } else if (arborist != address(0)) {
-            revert TreeAlreadyPlanted();
-        }
-        arborist = _arborist;
-        controller = _controller;
-
-        filledSubtrees = [
-            0x2fe54c60d3acabf3343a35b6eba15db4821b340f76e741e2249685ed4899af6c,
-            0x256a6135777eee2fd26f54b8b7037a25439d5235caee224154186d2b8a52e31d,
-            0x1151949895e82ab19924de92c40a3d6f7bcb60d92b00504b8199613683f0c200,
-            0x20121ee811489ff8d61f09fb89e313f14959a0f28bb428a20dba6b0b068b3bdb,
-            0x0a89ca6ffa14cc462cfedb842c30ed221a50a3d6bf022a6a57dc82ab24c157c9,
-            0x24ca05c2b5cd42e890d6be94c68d0689f4f21c9cec9c0f13fe41d566dfb54959,
-            0x1ccb97c932565a92c60156bdba2d08f3bf1377464e025cee765679e604a7315c,
-            0x19156fbd7d1a8bf5cba8909367de1b624534ebab4f0f79e003bccdd1b182bdb4,
-            0x261af8c1f0912e465744641409f622d466c3920ac6e5ff37e36604cb11dfff80,
-            0x0058459724ff6ca5a1652fcbc3e82b93895cf08e975b19beab3f54c217d1c007,
-            0x1f04ef20dee48d39984d8eabe768a70eafa6310ad20849d4573c3c40c2ad1e30,
-            0x1bea3dec5dab51567ce7e200a30f7ba6d4276aeaa53e2686f962a46c66d511e5,
-            0x0ee0f941e2da4b9e31c3ca97a40d8fa9ce68d97c084177071b3cb46cd3372f0f,
-            0x1ca9503e8935884501bbaf20be14eb4c46b89772c97b96e3b2ebf3a36a948bbd,
-            0x133a80e30697cd55d8f7d4b0965b7be24057ba5dc3da898ee2187232446cb108,
-            0x13e6d8fc88839ed76e182c2a779af5b2c0da9dd18c90427a644f7e148a6253b6,
-            0x1eb16b057a477f4bc8f572ea6bee39561098f78f15bfb3699dcbb7bd8db61854,
-            0x0da2cb16a1ceaabf1c16b838f7a9e3f2a3a3088d9e0a6debaa748114620696ea,
-            0x24a3b3d822420b14b5d8cb6c28a574f01e98ea9e940551d2ebd75cee12649f9d,
-            0x198622acbd783d1b0d9064105b1fc8e4d8889de95c4c519b3f635809fe6afc05
-        ];
-    }
-
-    function currentRoot() public view returns (uint) {
-        return filledSubtrees[19];
-    }
-
-    function getFilledSubtrees() public view returns (uint[20] memory) {
-        return filledSubtrees;
-    }
-
-    // add a leaf to the queue. if the queue is full or beyond full, then signal
-    // to the arborist that an update is needed
-    function commit(uint leaf) public returns (uint) {
-        uint i = latestIndex;
-        if (i == TREE_CAPACITY) {
-            revert TreeIsFull();
-        } else if (msg.sender != controller) {
-            revert OnlyController();
-        }
-
-        commitments[i] = leaf;
-
-        uint newLatestIndex;
-        unchecked {
-            newLatestIndex = i + 1;
-        }
-
-        latestIndex = newLatestIndex;
-
-        uint next = nextIndex;
-        if ((newLatestIndex - next) >= 10) {
-            IArborist(arborist).sprout(next);
-        }
-
-        emit LeafCommitted(leaf, i);
-        return i;
-    }
-
-    function checkMassUpdate()
-        external
-        view
-        returns (uint[10] memory, uint[20] memory, uint)
-    {
-        uint next = nextIndex;
-        uint latest = latestIndex;
-        unchecked {
-            if ((latest - next) < 10)
-                revert InsufficientLeaves();
-        }
-        uint[10] memory leaves;
-        for (uint i; i < 10;) {
-            unchecked {
-                leaves[i] = commitments[next + i];
-                ++i;
-            }
-        }
-        uint linkBalance = IArborist(arborist).checkTreeBalance(address(this));
-        if (linkBalance < IArborist(arborist).linkPayment()) {
-            revert InsufficientLinkBalance(address(this));
-        }
-        return (leaves, filledSubtrees, next);
-    }
-
-    function performMassUpdate(
-        uint[8] calldata proof,
-        uint[20] calldata newSubtrees
-    )
-        public
-        returns (uint finalIndex) 
-    {
-        uint next = nextIndex;
-        unchecked {
-            if ((latestIndex - next) < 10)
-                revert InsufficientLeaves();
-            finalIndex = next + 10;
-        }
-
-        uint[51] memory publicSignals;
-        publicSignals[0] = uint(next);
-
-        for (uint i; i < 10;) {
-            unchecked { 
-                publicSignals[i + 1] = commitments[i + next];
-                delete commitments[i + next];
-                ++i;
-            }
-        }
-
-        for (uint i; i < 20;) {
-            unchecked { 
-                publicSignals[i + 11] = filledSubtrees[i];
-                publicSignals[i + 31] = newSubtrees[i];
-                ++i; 
-            }
-        }
-
-        if (!_verifyMassUpdateProof(
-            proof,
-            publicSignals
-        ))
-            revert InvalidMassUpdateProof();
-
-        for (uint i; i < 20;) {
-            unchecked { 
-                if (publicSignals[i+11] != newSubtrees[i]) {
-                    filledSubtrees[i] = newSubtrees[i];
-                }
-                ++i; 
-            }
-        }
-        nextIndex = finalIndex;
-        IArborist(arborist).harvest(msg.sender);
-    }
-
-    function update(
-        uint[8] calldata proof,
-        uint[20] calldata newSubtrees
-    )
-        public
-        returns (uint finalIndex) 
-    {
-        uint next = nextIndex;
-        if (next > latestIndex)
-            revert InsufficientLeaves();
-        unchecked {
-            finalIndex = next + 1;
-        }
-        uint[42] memory publicSignals;
-        publicSignals[0] = uint(next);
-        publicSignals[1] = uint(commitments[next]);
-        commitments[next] = 0;
-        for (uint i; i < 20;) {
-            publicSignals[i + 2] = filledSubtrees[i];
-            publicSignals[i + 22] = newSubtrees[i];
-            unchecked { ++i; }
-        }
-
-        if (!_verifyUpdateProof(
-            proof,
-            publicSignals
-        ))
-            revert InvalidUpdateProof();
-
-        for (uint i; i < 20;) {
-            unchecked { 
-                if (publicSignals[i+11] != newSubtrees[i]) {
-                    filledSubtrees[i] = newSubtrees[i];
-                }
-                ++i;
-            }
-        }
-        nextIndex = finalIndex;
-    }
+contract VMTree is MassUpdateVerifier {
 
     error InsufficientLeaves();
     error InsufficientLinkBalance(address linkPayerOrCollector);
@@ -227,4 +15,172 @@ contract VMTree is UpdateVerifier, MassUpdateVerifier {
     error TreeAlreadyPlanted();
     error TreeIsFull();
     error ZeroAddress();
+
+    event LeafCommitted(uint leaf, uint index);
+    event TreeUpdated(uint previousIndex, uint nextIndex);
+
+    uint private constant LEVELS = 20;
+    uint private constant BATCH_SIZE = 16;
+    uint private constant OFFSET_FILLED_SUBTREES = 2;
+    uint private constant OFFSET_NEW_SUBTREES = OFFSET_FILLED_SUBTREES + LEVELS;
+    uint private constant OFFSET_LEAVES = OFFSET_NEW_SUBTREES + LEVELS;
+    uint private constant N_PUBLIC_SIGNALS = OFFSET_LEAVES + BATCH_SIZE;
+    uint private constant TREE_CAPACITY = 1 << LEVELS;
+    address private arborist;
+    address private controller;
+    mapping(uint => uint) private commitments;
+    uint private nextIndex;
+    uint[LEVELS] private filledSubtrees;
+
+    uint public latestIndex;
+    uint public currentRoot;
+
+    function plant(address _arborist, address _controller) external {
+        if (_arborist == address(0) || _controller == address(0)) {
+            revert ZeroAddress();
+        } else if (arborist != address(0)) {
+            revert TreeAlreadyPlanted();
+        }
+        arborist = _arborist;
+        controller = _controller;
+        uint[32] memory zeros = [
+            0x1afaac8e3a7748c3f03aabbaf80c9593fb24ab3f9cad18f143a9dcc17849d35c,
+            0x141995d79e6b4abeabebc2901a93834d49004039b15f5848f55f9873beac93c3,
+            0x073a152acc83c70e196e2f1adfeef593c16a6c4d163b97728e6a7278cc801348,
+            0x05f4bce4568668f276842d88ceea3166a397dc7b85aef67ee066c6284f99b317,
+            0x212ebe78fb63723efcc8bd57dc4eeeecf5fea1b9d42951a767d6e32c3e331f50,
+            0x15e356f8c09f0500a4282aca55c36649d3d20178ac95523978836dc51e85aed2,
+            0x1cc1329d8a531550cd7e46bc3bf7f39a8f347e656858bae8a01a155d6abf0307,
+            0x14f60777b76dd766c2605c8a40c90261e32f46f7fee198380aff7ef7ddf08013,
+            0x114fb6534ddba8b53521f3f415817e483b899e263c693e4fc35760492c8fb6a0,
+            0x052913002a39146ab08c32a1b732e8073a48a53940b2df8de3c1ca07758bd2b2,
+            0x14c3f02c584317db693db7df51e7739d17824aaa90f9f37778ec6ca35ff9b633,
+            0x2d30e3b5645cee0f6e597cd11753bf60f4cea529af9d8ae5104cf296c9bb0201,
+            0x013c71504dc68143f920f6f26a2ce460b1c79c1e7ed6563447329f0302257035,
+            0x013d11110eccb7fa8634efa4053b4bb064330c0fa4651849c890f72fddd2f78d,
+            0x0c2a7d8ebf453e616f1dd48a065cd8a3ff8b37901e81460513c5d263bf6e85fe,
+            0x15876ac2e5eaf8e6b83405357331d4852226402a9b304c1bf6b5382518149b61,
+            0x0b697a840076e05b8c77d8d3e79ceee525dfcbd559aeebe0eab108a3ce8decec,
+            0x0de34184e19231bb8aaa3b846b8495f2443f5d652055380a6df5c4855f081bc7,
+            0x1f1dec293fe89561513bbe1ba0d09b170d11fed8c3440f1bcf0e00beaad7279b,
+            0x1cf81850d57c910a1b49c3fcf035376148a99540a3a70f1062bc67c752f81e37,
+            0x263b0af2cc00ae97de1a98c1db4070767b275313aab28d4ad87b7b293ce794ee,
+            0x17af95bb3f1d0929655e1cb1565538b4a1714ba5f03079d3e286fd19cf3479ef,
+            0x05873d44e99d000fa3add2efa8f3a317ebcfe72b2dd66348e0398f61c27d5f04,
+            0x26ad3b05001810ac5213459bbea47eae15705195bd3936181fecff21416e6a9c,
+            0x1ee7c900e6caea171bc1f078171440144a9fbcfad54abf2973396a9943f47d88,
+            0x056b1f9418e15507f2b6d39cc77522e73816ce56c98cb4bac50db479ca64c727,
+            0x0920e57ffaa87b220a611948ae09955bf3dcc3bc1526e8f4bcd76aa5cdc2cebd,
+            0x2a18f9acac248e42ff903a32dcb15620b78f3b047038728ac0d295c609ce9b6a,
+            0x28d07e1e14dfc797e526f988165e5fcfc619cc1119841e7729b09bcbc236d0e9,
+            0x08982b5df134bc06316c283b47c6525c089a6617e47690a9094b00e74179ecd4,
+            0x2ad48d1ed7f4fc3cb40566a160b4480825d57e1585a3271c82b5a9a270fe7303,
+            0x1fe56fc51e4735b2118a291e3771f5314ae4f633758ffede033aac4d636d2de5
+        ];
+        for (uint i; i < LEVELS;) {
+            filledSubtrees[i] = zeros[i];
+            ++i;
+        }
+        currentRoot = zeros[LEVELS];
+    }
+
+    function getFilledSubtrees() public view returns (uint[20] memory) {
+        return filledSubtrees;
+    }
+
+    function commit(uint leaf) public returns (uint) {
+        uint i = latestIndex;
+        if (i == TREE_CAPACITY) {
+            revert TreeIsFull();
+        } else if (msg.sender != controller) {
+            revert OnlyController();
+        }
+        commitments[i] = leaf;
+        uint newLatestIndex;
+        unchecked {
+            newLatestIndex = i + 1;
+        }
+        latestIndex = newLatestIndex;
+        uint startIndex = nextIndex;
+        if ((newLatestIndex - startIndex) >= BATCH_SIZE) {
+            IArborist(arborist).sprout(startIndex);
+        }
+        emit LeafCommitted(leaf, i);
+        return i;
+    }
+
+    function checkMassUpdate()
+        external
+        view
+        returns (uint[BATCH_SIZE] memory, uint[LEVELS] memory, uint)
+    {
+        uint startIndex = nextIndex;
+        uint latest = latestIndex;
+        unchecked {
+            if ((latest - startIndex) < BATCH_SIZE)
+                revert InsufficientLeaves();
+        }
+        uint[BATCH_SIZE] memory leaves;
+        for (uint i; i < BATCH_SIZE;) {
+            unchecked {
+                leaves[i] = commitments[startIndex + i];
+                ++i;
+            }
+        }
+        uint linkBalance = IArborist(arborist).checkTreeBalance(address(this));
+        if (linkBalance < IArborist(arborist).linkPayment()) {
+            revert InsufficientLinkBalance(address(this));
+        }
+        return (leaves, filledSubtrees, startIndex);
+    }
+
+    function performMassUpdate(
+        uint newRoot,
+        uint[LEVELS] calldata newSubtrees,
+        uint[8] calldata proof
+    )
+        public
+        returns (uint finalIndex)
+    {
+        uint startIndex = nextIndex;
+        unchecked {
+            if ((latestIndex - startIndex) < BATCH_SIZE)
+                revert InsufficientLeaves();
+            finalIndex = startIndex + BATCH_SIZE;
+        }
+        uint[N_PUBLIC_SIGNALS] memory publicSignals;
+        publicSignals[0] = newRoot;
+        publicSignals[1] = startIndex;
+        for (uint i; i < LEVELS;) {
+            unchecked {
+                publicSignals[i + OFFSET_FILLED_SUBTREES] = filledSubtrees[i];
+                publicSignals[i + OFFSET_NEW_SUBTREES] = newSubtrees[i];
+                ++i;
+            }
+        }
+        for (uint i; i < BATCH_SIZE;) {
+            unchecked {
+                uint c = i + startIndex;
+                publicSignals[i + OFFSET_LEAVES] = commitments[c];
+                delete commitments[c];
+                ++i;
+            }
+        }
+        if (!_verifyMassUpdateProof(
+            proof,
+            publicSignals
+        ))
+            revert InvalidMassUpdateProof();
+        for (uint i; i < LEVELS;) {
+            unchecked {
+                if (publicSignals[i + OFFSET_FILLED_SUBTREES] != newSubtrees[i]) {
+                    filledSubtrees[i] = newSubtrees[i];
+                }
+                ++i;
+            }
+        }
+        currentRoot = newRoot;
+        nextIndex = finalIndex;
+        IArborist(arborist).harvest(msg.sender);
+    }
 }

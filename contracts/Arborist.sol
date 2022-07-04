@@ -112,7 +112,7 @@ contract Arborist is Ownable {
 
         // NOTE: hardhat failed to infer the reason for this reverting
         (address controller, string memory name) = abi.decode(
-            data, 
+            data,
             (address, string)
         );
         address tree = cloneAndPlant(controller);
