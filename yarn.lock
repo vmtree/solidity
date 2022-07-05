@@ -8020,7 +8020,7 @@ verror@1.10.0:
 
 vmtree-sdk@vmtree/sdk:
   version "0.1.0"
-  resolved "https://codeload.github.com/vmtree/sdk/tar.gz/1c11efafb19a3f68ab222fabcb752502f03c67a5"
+  resolved "https://codeload.github.com/vmtree/sdk/tar.gz/3f5917c5646295b2a65729029c45f482d3db707a"
   dependencies:
     "@ethersproject/bignumber" "^5.6.0"
     "@ethersproject/bytes" "^5.6.1"

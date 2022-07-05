@@ -1,16 +1,11 @@
 const { ethers } = require('hardhat');
 const { expect } = require('chai');
 const { deploy } = require('../scripts/hardhat.utils.js');
-const { stringifyBigInts } = require('ffjavascript').utils;
 const {
-    calculateNextRoot,
-    generateProof,
+    fullProvePoseidon,
     verifyProof,
-    poseidon: hasher,
-    utils
+    utils: { unsafeRandomLeaves }
 } = require('vmtree-sdk');
-
-const { unsafeRandomLeaves, flattenProof } = utils;
 
 const wasmFileName = './circuits/mass_update.wasm';
 const zkeyFileName =  './circuits/mass_update.zkey';
@@ -36,20 +31,8 @@ describe('[START] - Arborist.test.js', function() {
         this.linkPayment = ethers.utils.parseUnits('0.1');
         this.specId = "0x" + "".padStart(32, '0').padStart(64, "0badc0de");
 
-        // commitments
-        const leaves = unsafeRandomLeaves(16).map(bn => bn.toString());
-        this.leaves = leaves;
-
-        // before any commitments
-        const {filledSubtrees: startSubtrees} = calculateNextRoot({hasher});
-        this.startSubtrees = startSubtrees;
-
-        // after 16 commitments
-        const {root: newRoot, filledSubtrees: endSubtrees} = calculateNextRoot({
-            hasher, leaves
-        });
-        this.newRoot = newRoot;
-        this.endSubtrees = endSubtrees;
+        // initial leaves
+        this.leaves = unsafeRandomLeaves(16);
 
         // deploy contracts
         this.linkToken = await deploy("LinkToken");
@@ -108,26 +91,6 @@ describe('[START] - Arborist.test.js', function() {
             );
     });
 
-    it('should generate a zero knowledge proof for 16 leaves', async() => {
-        const input = stringifyBigInts({
-            newRoot: this.newRoot,
-            startIndex: 0,
-            startSubtrees: this.startSubtrees,
-            endSubtrees: this.endSubtrees,
-            leaves: this.leaves,
-        });
-
-        console.time('mass update proof');
-        this.massUpdateProof = await generateProof({input, wasmFileName, zkeyFileName});
-        console.timeEnd('mass update proof');
-        const result = await verifyProof({
-            proof: this.massUpdateProof.proof,
-            publicSignals: this.massUpdateProof.publicSignals,
-            verifierJson
-        });
-        expect(result).to.be.true;
-    });
-
     it('should have correct link balances before performMassUpdate', async () => {
         expect(await this.arborist.linkPayerBalance(this.linkPayer.address))
             .to.be.equal(this.linkPayment.mul(10));
@@ -136,13 +99,36 @@ describe('[START] - Arborist.test.js', function() {
             .to.be.equal(0);
     });
 
-    it('should update the VMTree for 16 deposits', async () => {
-        const { proof } = this.massUpdateProof;
-        const p = flattenProof(proof);
+    it('should update vmtree', async () => {
+        const [
+            leaves,
+            startSubtrees,
+            startIndex
+        ] = await this.vmtree.checkMassUpdate();
+
+        const {
+            proof,
+            publicSignals,
+            solidityInput: { newRoot, newSubtrees, p }
+        } = await fullProvePoseidon({
+            zkeyFileName,
+            wasmFileName,
+            startIndex,
+            startSubtrees,
+            leaves
+        });
+
+        const result = await verifyProof({
+            proof,
+            publicSignals,
+            verifierJson
+        });
+
+        expect(result).to.be.true;
 
         await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
-            this.newRoot,
-            this.endSubtrees,
+            newRoot,
+            newSubtrees,
             p
         )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
             this.vmtree.address,
@@ -222,36 +208,29 @@ describe('[START] - Arborist.test.js', function() {
             startIndex
         ] = await this.vmtree.checkMassUpdate();
 
-        const {root: newRoot, filledSubtrees: endSubtrees} = calculateNextRoot({
-            hasher,
-            startIndex,
-            leaves,
-            startSubtrees
-        });
-
-        const input = stringifyBigInts({
-            newRoot,
+        const {
+            proof,
+            publicSignals,
+            solidityInput: { newRoot, newSubtrees, p }
+        } = await fullProvePoseidon({
+            zkeyFileName,
+            wasmFileName,
             startIndex,
             startSubtrees,
-            endSubtrees,
-            leaves,
+            leaves
         });
 
-        console.time('mass update proof');
-        const { proof, publicSignals } = await generateProof({input, wasmFileName, zkeyFileName});
-        console.timeEnd('mass update proof');
         const result = await verifyProof({
             proof,
             publicSignals,
             verifierJson
         });
-        expect(result).to.be.true;
 
-        const p = flattenProof(proof);
+        expect(result).to.be.true;
 
         await expect(this.vmtree.connect(this.linkNode).performMassUpdate(
             newRoot,
-            endSubtrees,
+            newSubtrees,
             p
         )).to.emit(this.arborist, 'VMTreeHarvested').withArgs(
             this.vmtree.address,

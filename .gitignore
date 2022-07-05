@@ -5,6 +5,7 @@ dist
 
 # sensitive values
 **/*/.env
+.env
 
 # error logs
 *.log
